@@ -2,6 +2,8 @@
 
 External OSS healthcheck CLI for Paperclip.
 
+Repo: https://github.com/citadelgrad/paperclip-doctor
+
 This project is intentionally a wrapper instead of a Paperclip core patch. It lets the community iterate quickly on runtime diagnostics and synthetic probes before deciding what should move upstream into `paperclipai doctor`.
 
 What it checks today:

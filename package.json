@@ -4,6 +4,14 @@
   "private": false,
   "description": "External Paperclip runtime healthcheck and doctor CLI",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/citadelgrad/paperclip-doctor.git"
+  },
+  "homepage": "https://github.com/citadelgrad/paperclip-doctor",
+  "bugs": {
+    "url": "https://github.com/citadelgrad/paperclip-doctor/issues"
+  },
   "bin": {
     "paperclip-doctor": "dist/index.js"
   },
