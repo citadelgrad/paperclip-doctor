@@ -14,11 +14,14 @@ type CheckResult = {
   details?: Record<string, unknown>;
 };
 
+type OverallStatus = "healthy" | "degraded" | "failed";
+
 type Report = {
   ok: boolean;
+  overallStatus: OverallStatus;
   command: Exclude<CommandName, "help">;
   generatedAt: string;
-  summary: { passed: number; warned: number; failed: number };
+  summary: { passed: number; warned: number; degraded: number; failed: number };
   checks: CheckResult[];
 };
 
@@ -168,12 +171,23 @@ function color(status: Status, text: string): string {
   return `\u001b[${code}m${text}\u001b[0m`;
 }
 
+function isDegradedCheck(check: CheckResult): boolean {
+  return check.status === "warn" && check.message.toLowerCase().includes("degraded but functioning");
+}
+
 function summarize(checks: CheckResult[]) {
   return {
     passed: checks.filter((c) => c.status === "pass").length,
     warned: checks.filter((c) => c.status === "warn").length,
+    degraded: checks.filter((c) => isDegradedCheck(c)).length,
     failed: checks.filter((c) => c.status === "fail").length,
   };
+}
+
+function deriveOverallStatus(checks: CheckResult[]): OverallStatus {
+  if (checks.some((c) => c.status === "fail")) return "failed";
+  if (checks.some((c) => c.status === "warn")) return "degraded";
+  return "healthy";
 }
 
 function exitCode(checks: CheckResult[]): number {
@@ -185,6 +199,7 @@ function exitCode(checks: CheckResult[]): number {
 function printHuman(report: Report): void {
   console.log(`paperclip-doctor ${report.command}`);
   console.log(`generated: ${report.generatedAt}`);
+  console.log(`overall: ${report.overallStatus}`);
   console.log("");
   for (const check of report.checks) {
     const icon = check.status === "pass" ? "✓" : check.status === "warn" ? "!" : "✗";
@@ -194,6 +209,7 @@ function printHuman(report: Report): void {
   console.log(
     [
       color("pass", `${report.summary.passed} passed`),
+      report.summary.degraded ? color("warn", `${report.summary.degraded} degraded`) : null,
       report.summary.warned ? color("warn", `${report.summary.warned} warnings`) : null,
       report.summary.failed ? color("fail", `${report.summary.failed} failed`) : null,
     ]
@@ -212,11 +228,23 @@ function escapeHtml(value: string): string {
 }
 
 function renderHtmlReport(report: Report): string {
-  const summaryHtml = [
-    { label: "Passed", value: report.summary.passed, className: "pass" },
-    { label: "Warnings", value: report.summary.warned, className: "warn" },
+  const warningOnlyCount = report.summary.warned - report.summary.degraded;
+  const heroToneClass = report.overallStatus === "failed" ? "fail" : report.overallStatus === "degraded" ? "warn" : "pass";
+  const heroMessage =
+    report.overallStatus === "failed"
+      ? "Failed overall. One or more hard failures need attention."
+      : report.overallStatus === "degraded"
+        ? "Degraded but functioning. Core paths are working, but one or more checks show slowness, drift, or non-terminal behavior."
+        : "Healthy overall. No degraded or failed checks were detected.";
+
+  const summaryItems = [
+    { label: "Healthy", value: report.summary.passed, className: "pass" },
+    { label: "Degraded", value: report.summary.degraded, className: "warn" },
+    { label: "Warnings", value: warningOnlyCount, className: "warn-muted" },
     { label: "Failures", value: report.summary.failed, className: "fail" },
-  ]
+  ].filter((item) => item.value > 0 || item.label !== "Warnings");
+
+  const summaryHtml = summaryItems
     .map(
       (item) =>
         `<div class="summary-card ${item.className}"><div class="summary-value">${item.value}</div><div class="summary-label">${item.label}</div></div>`,
@@ -225,10 +253,11 @@ function renderHtmlReport(report: Report): string {
 
   const checksHtml = report.checks
     .map((check) => {
+      const classification = isDegradedCheck(check) ? "degraded" : check.status;
       const details = check.details ? `<pre>${escapeHtml(JSON.stringify(check.details, null, 2))}</pre>` : "";
-      return `<section class="check ${check.status}">
+      return `<section class="check ${classification}">
         <div class="check-header">
-          <span class="badge ${check.status}">${escapeHtml(check.status.toUpperCase())}</span>
+          <span class="badge ${classification}">${escapeHtml(classification.toUpperCase())}</span>
           <h3>${escapeHtml(check.name)}</h3>
         </div>
         <p>${escapeHtml(check.message)}</p>
@@ -244,14 +273,21 @@ function renderHtmlReport(report: Report): string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>paperclip-doctor ${escapeHtml(report.command)} report</title>
   <style>
-    :root { color-scheme: dark; --bg: #0b1020; --panel: #121937; --panel-2: #182042; --text: #eef2ff; --muted: #aab4d6; --pass: #22c55e; --warn: #f59e0b; --fail: #ef4444; --border: #2b3768; }
+    :root { color-scheme: dark; --bg: #0b1020; --panel: #121937; --panel-2: #182042; --text: #eef2ff; --muted: #aab4d6; --pass: #22c55e; --warn: #f59e0b; --warn-muted: #fbbf24; --fail: #ef4444; --border: #2b3768; }
     * { box-sizing: border-box; }
     body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif; background: linear-gradient(180deg, #0b1020 0%, #111936 100%); color: var(--text); }
     .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 20px 60px; }
     .hero, .check, .summary-card, .meta { background: rgba(18, 25, 55, 0.92); border: 1px solid var(--border); border-radius: 18px; box-shadow: 0 10px 30px rgba(0,0,0,0.25); }
     .hero { padding: 24px; margin-bottom: 20px; }
+    .hero.pass { border-color: color-mix(in srgb, var(--pass) 60%, var(--border)); }
+    .hero.warn { border-color: color-mix(in srgb, var(--warn) 60%, var(--border)); }
+    .hero.fail { border-color: color-mix(in srgb, var(--fail) 60%, var(--border)); }
     .hero h1 { margin: 0 0 8px; font-size: 30px; }
     .hero p { margin: 0; color: var(--muted); }
+    .hero-status { display: inline-flex; align-items: center; padding: 6px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: .08em; margin-bottom: 12px; }
+    .hero-status.pass { background: rgba(34, 197, 94, .16); color: #86efac; }
+    .hero-status.warn { background: rgba(245, 158, 11, .16); color: #fcd34d; }
+    .hero-status.fail { background: rgba(239, 68, 68, .16); color: #fca5a5; }
     .meta { padding: 16px 18px; margin-bottom: 20px; }
     .meta-grid, .summary-grid { display: grid; gap: 16px; }
     .meta-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
@@ -260,19 +296,19 @@ function renderHtmlReport(report: Report): string {
     .meta-value { margin-top: 6px; font-size: 15px; word-break: break-word; }
     .summary-card { padding: 18px; text-align: center; }
     .summary-card.pass { border-color: color-mix(in srgb, var(--pass) 60%, var(--border)); }
-    .summary-card.warn { border-color: color-mix(in srgb, var(--warn) 60%, var(--border)); }
-    .summary-card.fail { border-color: color-mix(in srgb, var(--fail) 60%, var(--border)); }
+    .summary-card.warn, .summary-card.degraded { border-color: color-mix(in srgb, var(--warn) 60%, var(--border)); }
+    .summary-card.warn-muted { border-color: color-mix(in srgb, var(--warn-muted) 50%, var(--border)); }
     .summary-value { font-size: 42px; font-weight: 700; margin-bottom: 8px; }
     .checks { display: grid; gap: 16px; }
     .check { padding: 18px; }
     .check.pass { border-left: 6px solid var(--pass); }
-    .check.warn { border-left: 6px solid var(--warn); }
+    .check.warn, .check.degraded { border-left: 6px solid var(--warn); }
     .check.fail { border-left: 6px solid var(--fail); }
     .check-header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
     .check-header h3 { margin: 0; font-size: 18px; }
     .badge { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: .08em; }
     .badge.pass { background: rgba(34, 197, 94, .16); color: #86efac; }
-    .badge.warn { background: rgba(245, 158, 11, .16); color: #fcd34d; }
+    .badge.warn, .badge.degraded { background: rgba(245, 158, 11, .16); color: #fcd34d; }
     .badge.fail { background: rgba(239, 68, 68, .16); color: #fca5a5; }
     p { line-height: 1.6; }
     pre { margin: 14px 0 0; padding: 14px; overflow-x: auto; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--border); color: #dbe6ff; }
@@ -280,16 +316,17 @@ function renderHtmlReport(report: Report): string {
 </head>
 <body>
   <div class="wrap">
-    <section class="hero">
+    <section class="hero ${heroToneClass}">
+      <div class="hero-status ${heroToneClass}">${escapeHtml(report.overallStatus.toUpperCase())}</div>
       <h1>paperclip-doctor ${escapeHtml(report.command)}</h1>
-      <p>${report.ok ? "Healthy overall. Review warnings for drift or slowness." : "One or more failures detected. Inspect the failing checks below."}</p>
+      <p>${escapeHtml(heroMessage)}</p>
     </section>
 
     <section class="meta">
       <div class="meta-grid">
         <div><div class="meta-label">Generated</div><div class="meta-value">${escapeHtml(report.generatedAt)}</div></div>
         <div><div class="meta-label">Command</div><div class="meta-value">${escapeHtml(report.command)}</div></div>
-        <div><div class="meta-label">Overall status</div><div class="meta-value">${escapeHtml(report.ok ? "healthy" : "failing")}</div></div>
+        <div><div class="meta-label">Overall status</div><div class="meta-value">${escapeHtml(report.overallStatus)}</div></div>
       </div>
     </section>
 
@@ -1141,8 +1178,10 @@ async function main(): Promise<void> {
         ? await runAgentChecks(args)
         : await runSyntheticChecks(args);
   const summary = summarize(checks);
+  const overallStatus = deriveOverallStatus(checks);
   const report: Report = {
     ok: summary.failed === 0,
+    overallStatus,
     command: args.command,
     generatedAt: new Date().toISOString(),
     summary,
