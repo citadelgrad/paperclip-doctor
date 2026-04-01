@@ -131,6 +131,7 @@ Each check script:
 - writes timestamped JSON + HTML artifacts under `health-reports/<kind>/history/`
 - updates `latest.json` and `latest.html`
 - regenerates `health-reports/index.html` so reports stay browsable from a single landing page
+- regenerates `health-reports/index.json` so external dashboards/automation can consume the same report catalog programmatically
 
 Examples:
 
@@ -169,6 +170,16 @@ You can also regenerate the index manually:
 ```bash
 ./scripts/generate-report-index.sh
 ```
+
+That writes both:
+- `health-reports/index.html`
+- `health-reports/index.json`
+
+The JSON manifest includes:
+- overall index status
+- generation timestamp
+- per-report-set latest artifact links
+- recent history entries with status/summary metadata
 
 ## Exit codes
 

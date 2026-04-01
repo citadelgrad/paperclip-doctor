@@ -18,8 +18,11 @@ from pathlib import Path
 
 report_root = Path(sys.argv[1])
 output_path = Path(sys.argv[2])
+json_output_path = output_path.with_suffix('.json')
 
-status_rank = {"failed": 0, "degraded": 1, "warning": 2, "healthy": 3}
+def status_sort_key(value):
+    return {"failed": 0, "degraded": 1, "warning": 2, "healthy": 3}.get(value, 99)
+
 status_class = {"failed": "fail", "degraded": "warn", "warning": "warn-muted", "healthy": "pass"}
 
 
@@ -75,11 +78,11 @@ for child in sorted(report_root.iterdir() if report_root.exists() else [], key=l
         "history": history_entries[:20],
     })
 
-kinds.sort(key=lambda item: (status_rank.get(item["overallStatus"], 99), item["name"]))
+kinds.sort(key=lambda item: (status_sort_key(item["overallStatus"]), item["name"]))
 
 overall_status = "healthy"
 for candidate in [item["overallStatus"] for item in kinds]:
-    if status_rank.get(candidate, 99) < status_rank.get(overall_status, 99):
+    if status_sort_key(candidate) < status_sort_key(overall_status):
         overall_status = candidate
 
 cards = []
@@ -190,6 +193,40 @@ html_doc = f"""<!doctype html>
 </html>
 """
 
+manifest = {
+    "generatedAt": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+    "overallStatus": overall_status,
+    "reportRoot": str(report_root),
+    "htmlIndex": output_path.name,
+    "reports": [
+        {
+            "name": item["name"],
+            "overallStatus": item["overallStatus"],
+            "latest": {
+                "generatedAt": (item["latest"] or {}).get("generatedAt") if isinstance(item.get("latest"), dict) else None,
+                "command": (item["latest"] or {}).get("command", item["name"]) if isinstance(item.get("latest"), dict) else item["name"],
+                "summary": (item["latest"] or {}).get("summary", {}) if isinstance(item.get("latest"), dict) else {},
+                "json": rel(item["latest_json"]) if item.get("latest_json") else None,
+                "html": rel(item["latest_html"]) if item.get("latest_html") else None,
+            },
+            "history": [
+                {
+                    "generatedAt": entry.get("generatedAt"),
+                    "overallStatus": entry.get("overallStatus"),
+                    "command": entry.get("command"),
+                    "summary": entry.get("summary", {}),
+                    "json": rel(entry["json"]) if entry.get("json") else None,
+                    "html": rel(entry["html"]) if entry.get("html") else None,
+                }
+                for entry in item.get("history", [])
+            ],
+        }
+        for item in kinds
+    ],
+}
+
 output_path.write_text(html_doc)
+json_output_path.write_text(json.dumps(manifest, indent=2) + "\n")
 print(str(output_path))
+print(str(json_output_path))
 PY
