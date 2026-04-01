@@ -123,12 +123,14 @@ This repo includes local scheduler helpers in `scripts/`:
 - `scripts/doctor-runtime.sh`
 - `scripts/doctor-agent.sh`
 - `scripts/doctor-synthetic.sh`
+- `scripts/generate-report-index.sh`
 - `scripts/install-cron.sh`
 
 Each check script:
 - runs the appropriate doctor command
 - writes timestamped JSON + HTML artifacts under `health-reports/<kind>/history/`
 - updates `latest.json` and `latest.html`
+- regenerates `health-reports/index.html` so reports stay browsable from a single landing page
 
 Examples:
 
@@ -162,10 +164,16 @@ Default schedules:
 - agent: daily at `13:47`
 - synthetic: Mondays at `14:23`
 
+You can also regenerate the index manually:
+
+```bash
+./scripts/generate-report-index.sh
+```
+
 ## Exit codes
 
 - `0` healthy
-- `1` warnings only
+- `1` warning or degraded
 - `2` at least one failure
 
 ## Why this exists

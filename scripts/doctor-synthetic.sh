@@ -27,6 +27,8 @@ set -e
 
 cp "$base.json" "$REPORT_DIR/latest.json"
 cp "$base.html" "$REPORT_DIR/latest.html"
+"$ROOT/scripts/generate-report-index.sh" >/dev/null
 
 echo "synthetic report written to $base.json and $base.html"
+echo "report index updated at $ROOT/health-reports/index.html"
 exit "$status"

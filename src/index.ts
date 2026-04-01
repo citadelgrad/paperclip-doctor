@@ -14,14 +14,14 @@ type CheckResult = {
   details?: Record<string, unknown>;
 };
 
-type OverallStatus = "healthy" | "degraded" | "failed";
+type OverallStatus = "healthy" | "warning" | "degraded" | "failed";
 
 type Report = {
   ok: boolean;
   overallStatus: OverallStatus;
   command: Exclude<CommandName, "help">;
   generatedAt: string;
-  summary: { passed: number; warned: number; degraded: number; failed: number };
+  summary: { passed: number; warned: number; warningOnly: number; degraded: number; failed: number };
   checks: CheckResult[];
 };
 
@@ -176,17 +176,21 @@ function isDegradedCheck(check: CheckResult): boolean {
 }
 
 function summarize(checks: CheckResult[]) {
+  const warned = checks.filter((c) => c.status === "warn").length;
+  const degraded = checks.filter((c) => isDegradedCheck(c)).length;
   return {
     passed: checks.filter((c) => c.status === "pass").length,
-    warned: checks.filter((c) => c.status === "warn").length,
-    degraded: checks.filter((c) => isDegradedCheck(c)).length,
+    warned,
+    warningOnly: warned - degraded,
+    degraded,
     failed: checks.filter((c) => c.status === "fail").length,
   };
 }
 
 function deriveOverallStatus(checks: CheckResult[]): OverallStatus {
   if (checks.some((c) => c.status === "fail")) return "failed";
-  if (checks.some((c) => c.status === "warn")) return "degraded";
+  if (checks.some((c) => isDegradedCheck(c))) return "degraded";
+  if (checks.some((c) => c.status === "warn")) return "warning";
   return "healthy";
 }
 
@@ -210,7 +214,7 @@ function printHuman(report: Report): void {
     [
       color("pass", `${report.summary.passed} passed`),
       report.summary.degraded ? color("warn", `${report.summary.degraded} degraded`) : null,
-      report.summary.warned ? color("warn", `${report.summary.warned} warnings`) : null,
+      report.summary.warningOnly ? color("warn", `${report.summary.warningOnly} warnings`) : null,
       report.summary.failed ? color("fail", `${report.summary.failed} failed`) : null,
     ]
       .filter(Boolean)
@@ -228,14 +232,23 @@ function escapeHtml(value: string): string {
 }
 
 function renderHtmlReport(report: Report): string {
-  const warningOnlyCount = report.summary.warned - report.summary.degraded;
-  const heroToneClass = report.overallStatus === "failed" ? "fail" : report.overallStatus === "degraded" ? "warn" : "pass";
+  const warningOnlyCount = report.summary.warningOnly;
+  const heroToneClass =
+    report.overallStatus === "failed"
+      ? "fail"
+      : report.overallStatus === "degraded"
+        ? "warn"
+        : report.overallStatus === "warning"
+          ? "warn-muted"
+          : "pass";
   const heroMessage =
     report.overallStatus === "failed"
       ? "Failed overall. One or more hard failures need attention."
       : report.overallStatus === "degraded"
         ? "Degraded but functioning. Core paths are working, but one or more checks show slowness, drift, or non-terminal behavior."
-        : "Healthy overall. No degraded or failed checks were detected.";
+        : report.overallStatus === "warning"
+          ? "Warning state. No hard failures or degraded runtime paths were detected, but one or more non-runtime warnings should be reviewed."
+          : "Healthy overall. No degraded or failed checks were detected.";
 
   const summaryItems = [
     { label: "Healthy", value: report.summary.passed, className: "pass" },
@@ -281,12 +294,14 @@ function renderHtmlReport(report: Report): string {
     .hero { padding: 24px; margin-bottom: 20px; }
     .hero.pass { border-color: color-mix(in srgb, var(--pass) 60%, var(--border)); }
     .hero.warn { border-color: color-mix(in srgb, var(--warn) 60%, var(--border)); }
+    .hero.warn-muted { border-color: color-mix(in srgb, var(--warn-muted) 50%, var(--border)); }
     .hero.fail { border-color: color-mix(in srgb, var(--fail) 60%, var(--border)); }
     .hero h1 { margin: 0 0 8px; font-size: 30px; }
     .hero p { margin: 0; color: var(--muted); }
     .hero-status { display: inline-flex; align-items: center; padding: 6px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: .08em; margin-bottom: 12px; }
     .hero-status.pass { background: rgba(34, 197, 94, .16); color: #86efac; }
     .hero-status.warn { background: rgba(245, 158, 11, .16); color: #fcd34d; }
+    .hero-status.warn-muted { background: rgba(251, 191, 36, .16); color: #fde68a; }
     .hero-status.fail { background: rgba(239, 68, 68, .16); color: #fca5a5; }
     .meta { padding: 16px 18px; margin-bottom: 20px; }
     .meta-grid, .summary-grid { display: grid; gap: 16px; }
