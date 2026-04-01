@@ -900,16 +900,42 @@ async function runAgentChecksFromContext(context: RuntimeContext, timeoutMs: num
       id: "heartbeat-final-status",
       name: "Heartbeat final status",
       status: "warn",
-      message: `Could not resolve final run status within ${timeoutMs}ms`,
+      message:
+        polled.sawAdapterInvoke || polled.sawEvents
+          ? `Degraded but functioning: heartbeat started and emitted runtime signals, but no terminal status was resolved within ${timeoutMs}ms`
+          : `Could not resolve final run status within ${timeoutMs}ms`,
+      details:
+        polled.sawAdapterInvoke || polled.sawEvents
+          ? {
+              sawEvents: polled.sawEvents,
+              sawAdapterInvoke: polled.sawAdapterInvoke,
+              sawExpectedEnv: polled.sawExpectedEnv,
+            }
+          : undefined,
     });
     return checks;
   }
 
+  const finalStatus = polled.finalRun.status;
+  const nonTerminalButHealthy = ["queued", "starting", "running"].includes(finalStatus) && (polled.sawAdapterInvoke || polled.sawEvents);
   checks.push({
     id: "heartbeat-final-status",
     name: "Heartbeat final status",
-    status: polled.finalRun.status === "succeeded" ? "pass" : polled.finalRun.status === "failed" ? "fail" : "warn",
-    message: polled.finalRun.error ? `${polled.finalRun.status}: ${polled.finalRun.error}` : polled.finalRun.status,
+    status: finalStatus === "succeeded" ? "pass" : finalStatus === "failed" ? "fail" : "warn",
+    message: polled.finalRun.error
+      ? `${finalStatus}: ${polled.finalRun.error}`
+      : nonTerminalButHealthy
+        ? `Degraded but functioning: run is still ${finalStatus} after ${timeoutMs}ms despite successful invoke/events/env checks`
+        : finalStatus,
+    details: nonTerminalButHealthy
+      ? {
+          runId,
+          finalStatus,
+          sawEvents: polled.sawEvents,
+          sawAdapterInvoke: polled.sawAdapterInvoke,
+          sawExpectedEnv: polled.sawExpectedEnv,
+        }
+      : undefined,
   });
 
   return checks;
@@ -1057,15 +1083,28 @@ async function runSyntheticChecks(args: ParsedArgs): Promise<CheckResult[]> {
     },
   });
 
+  const syntheticShowedProgress = Boolean(matchedRun) && (latestComments.length > 0 || (latestIssue?.status && latestIssue.status !== issue.status));
   checks.push({
     id: "synthetic-terminal-status",
     name: "Synthetic terminal status",
-    status: !terminalRun ? matchedRun ? "warn" : "warn" : terminalRun.status === "succeeded" ? "pass" : terminalRun.status === "failed" ? "fail" : "warn",
+    status: !terminalRun ? "warn" : terminalRun.status === "succeeded" ? "pass" : terminalRun.status === "failed" ? "fail" : "warn",
     message: terminalRun
       ? terminalRun.error
         ? `${terminalRun.status}: ${terminalRun.error}`
         : terminalRun.status
-      : "Synthetic heartbeat did not reach a terminal state within timeout",
+      : syntheticShowedProgress
+        ? "Degraded but functioning: synthetic issue triggered a real run and issue progress, but the run did not reach a terminal state within timeout"
+        : matchedRun
+          ? "Synthetic heartbeat started but did not reach a terminal state within timeout"
+          : "Synthetic heartbeat did not reach a terminal state within timeout",
+    details: !terminalRun && syntheticShowedProgress
+      ? {
+          matchedRunId: matchedRun?.id,
+          matchedRunStatus: matchedRun?.status,
+          latestIssueStatus: latestIssue?.status,
+          commentCount: latestComments.length,
+        }
+      : undefined,
   });
 
   if (args.cleanup) {
